@@ -24,7 +24,7 @@ public class ItemController {
 
     @PatchMapping("/{itemId}")
     public ItemDto updateItem(@PathVariable Long itemId,
-                              @RequestBody ItemDto itemDto, // Убрали @Valid для PATCH
+                              @RequestBody ItemDto itemDto,
                               @RequestHeader("X-Sharer-User-Id") Long userId) {
         log.info("PATCH /items/{} - обновление вещи пользователем ID: {}", itemId, userId);
         return itemService.updateItem(itemId, itemDto, userId);

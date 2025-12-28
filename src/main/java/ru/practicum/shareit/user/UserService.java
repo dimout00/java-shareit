@@ -1,5 +1,6 @@
 package ru.practicum.shareit.user;
 
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import ru.practicum.shareit.exception.ConflictException;
@@ -7,89 +8,77 @@ import ru.practicum.shareit.exception.NotFoundException;
 import ru.practicum.shareit.exception.ValidationException;
 import ru.practicum.shareit.user.dto.UserDto;
 import ru.practicum.shareit.user.model.User;
+import ru.practicum.shareit.user.storage.UserStorage;
 
-import java.util.*;
+import java.util.List;
 import java.util.stream.Collectors;
 
 @Service
+@RequiredArgsConstructor
 @Slf4j
 public class UserService {
-    private final Map<Long, User> users = new HashMap<>();
-    private Long currentId = 1L;
-    private final Set<String> emails = new HashSet<>();
+    private final UserStorage userStorage;
 
     public UserDto createUser(UserDto userDto) {
         validateUser(userDto);
 
-        if (emails.contains(userDto.getEmail())) {
+        // Проверяем уникальность email с помощью семантического метода
+        if (userStorage.existsByEmail(userDto.getEmail())) {
             throw new ConflictException("Пользователь с email " + userDto.getEmail() + " уже существует");
         }
 
         User user = UserMapper.toUser(userDto);
-        user.setId(currentId++);
-
-        users.put(user.getId(), user);
-        emails.add(user.getEmail());
+        user = userStorage.save(user);
 
         log.info("Создан пользователь с ID: {}", user.getId());
         return UserMapper.toUserDto(user);
     }
 
     public UserDto updateUser(Long userId, UserDto userDto) {
-        User user = users.get(userId);
-        if (user == null) {
-            throw new NotFoundException("Пользователь с ID " + userId + " не найден");
-        }
+        User existingUser = userStorage.findById(userId)
+                .orElseThrow(() -> new NotFoundException("Пользователь с ID " + userId + " не найден"));
 
-        if (userDto.getEmail() != null && !userDto.getEmail().equals(user.getEmail())) {
-            if (emails.contains(userDto.getEmail())) {
+        if (userDto.getEmail() != null && !userDto.getEmail().equals(existingUser.getEmail())) {
+            // Используем семантический метод existsByEmail
+            if (userStorage.existsByEmail(userDto.getEmail())) {
                 throw new ConflictException("Email " + userDto.getEmail() + " уже используется другим пользователем");
             }
-            emails.remove(user.getEmail());
-            emails.add(userDto.getEmail());
-            user.setEmail(userDto.getEmail());
+            existingUser.setEmail(userDto.getEmail());
         }
 
         if (userDto.getName() != null) {
-            user.setName(userDto.getName());
+            existingUser.setName(userDto.getName());
         }
 
+        User updatedUser = userStorage.update(existingUser);
         log.info("Обновлен пользователь с ID: {}", userId);
-        return UserMapper.toUserDto(user);
+        return UserMapper.toUserDto(updatedUser);
     }
 
     public UserDto getUserById(Long userId) {
-        User user = users.get(userId);
-        if (user == null) {
-            throw new NotFoundException("Пользователь с ID " + userId + " не найден");
-        }
-        return UserMapper.toUserDto(user);
+        return userStorage.findById(userId)
+                .map(UserMapper::toUserDto)
+                .orElseThrow(() -> new NotFoundException("Пользователь с ID " + userId + " не найден"));
     }
 
     public List<UserDto> getAllUsers() {
-        return users.values().stream()
+        return userStorage.findAll().stream()
                 .map(UserMapper::toUserDto)
                 .collect(Collectors.toList());
     }
 
     public void deleteUser(Long userId) {
-        User user = users.remove(userId);
-        if (user != null) {
-            emails.remove(user.getEmail());
-        }
+        userStorage.deleteById(userId);
         log.info("Удален пользователь с ID: {}", userId);
     }
 
     public User getUserEntity(Long userId) {
-        User user = users.get(userId);
-        if (user == null) {
-            throw new NotFoundException("Пользователь с ID " + userId + " не найден");
-        }
-        return user;
+        return userStorage.findById(userId)
+                .orElseThrow(() -> new NotFoundException("Пользователь с ID " + userId + " не найден"));
     }
 
     public boolean userExists(Long userId) {
-        return users.containsKey(userId);
+        return userStorage.existsById(userId);
     }
 
     private void validateUser(UserDto userDto) {
