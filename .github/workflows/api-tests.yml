@@ -2,7 +2,76 @@ name: ShareIt API Tests
 
 on:
   pull_request:
+    branches: [ main ]
 
 jobs:
-  build:
-    uses: yandex-praktikum/java-shareit/.github/workflows/api-tests.yml@ci
+  api-tests:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v3
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Build with Maven
+        run: mvn clean compile -q
+
+      - name: Start Spring Boot Server
+        run: |
+          # Запускаем сервер в фоновом режиме
+          mvn spring-boot:run -DskipTests -q &
+          echo "SERVER_PID=$!" >> $GITHUB_ENV
+          
+          # Ждем пока сервер запустится
+          echo "Waiting for server to start..."
+          for i in {1..30}; do
+            if curl -s http://localhost:8080 > /dev/null 2>&1; then
+              echo "✅ Server is running!"
+              break
+            fi
+            echo "Attempt $i/30: Server not ready yet..."
+            sleep 2
+          done
+          
+          if ! curl -s http://localhost:8080 > /dev/null 2>&1; then
+            echo "❌ Server failed to start"
+            exit 1
+          fi
+
+      - name: Install Newman
+        run: npm install -g newman
+
+      - name: Run Postman Tests
+        run: |
+          # Теперь используем правильный путь к файлу коллекции
+          newman run ./src/test/resources/sprint.json \
+            --delay-request 50 \
+            -r cli,htmlextra \
+            --verbose \
+            --color on \
+            --reporter-htmlextra-darkTheme \
+            --reporter-htmlextra-export reports/shareIt.html \
+            --reporter-htmlextra-title "Отчет по тестам" \
+            --reporter-htmlextra-logs true \
+            --reporter-htmlextra-template ./tests/.github/workflows/dashboard-template.hbs
+
+      - name: Stop Spring Boot Server
+        if: always()
+        run: |
+          if [ -n "$SERVER_PID" ]; then
+            echo "Stopping server with PID: $SERVER_PID"
+            kill $SERVER_PID 2>/dev/null || true
+          fi
+          pkill -f "spring-boot" 2>/dev/null || true
+
+      - name: Upload Test Report
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: postman-test-report
+          path: reports/shareIt.html
