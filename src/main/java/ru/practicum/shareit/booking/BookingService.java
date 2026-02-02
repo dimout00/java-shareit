@@ -10,6 +10,7 @@ import org.springframework.transaction.annotation.Transactional;
 import ru.practicum.shareit.booking.dto.BookingRequestDto;
 import ru.practicum.shareit.booking.dto.BookingResponseDto;
 import ru.practicum.shareit.booking.model.Booking;
+import ru.practicum.shareit.booking.strategy.BookingStateFetchStrategy;
 import ru.practicum.shareit.exception.*;
 import ru.practicum.shareit.item.ItemRepository;
 import ru.practicum.shareit.item.model.Item;
@@ -18,6 +19,7 @@ import ru.practicum.shareit.user.model.User;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 @Service
@@ -28,9 +30,10 @@ public class BookingService {
     private final BookingRepository bookingRepository;
     private final ItemRepository itemRepository;
     private final UserRepository userRepository;
+    private final Map<String, BookingStateFetchStrategy> bookingStrategyMap;
 
     @Transactional
-    public BookingResponseDto createBooking(BookingRequestDto bookingRequestDto, Long userId) {
+    public BookingResponseDto createBooking(BookingRequestDto bookingRequestDto, Long userId) { // ИЗМЕНИЛ НАЗВАНИЕ НА createBooking
         // Проверяем, что пользователь существует
         User booker = userRepository.findById(userId)
                 .orElseThrow(() -> new NotFoundException("Пользователь с ID " + userId + " не найден"));
@@ -111,7 +114,6 @@ public class BookingService {
     }
 
     public List<BookingResponseDto> getUserBookings(Long userId, String state, int from, int size) {
-        // Проверяем, что пользователь существует
         if (!userRepository.existsById(userId)) {
             throw new NotFoundException("Пользователь с ID " + userId + " не найден");
         }
@@ -119,38 +121,17 @@ public class BookingService {
         Pageable pageable = PageRequest.of(from / size, size, Sort.by("start").descending());
         LocalDateTime now = LocalDateTime.now();
 
-        switch (state.toUpperCase()) {
-            case "ALL":
-                return bookingRepository.findByBookerId(userId, pageable).stream()
-                        .map(BookingMapper::toBookingResponseDto)
-                        .collect(Collectors.toList());
-            case "CURRENT":
-                return bookingRepository.findByBookerIdAndStartBeforeAndEndAfter(userId, now, pageable).stream()
-                        .map(BookingMapper::toBookingResponseDto)
-                        .collect(Collectors.toList());
-            case "PAST":
-                return bookingRepository.findByBookerIdAndEndBefore(userId, now, pageable).stream()
-                        .map(BookingMapper::toBookingResponseDto)
-                        .collect(Collectors.toList());
-            case "FUTURE":
-                return bookingRepository.findByBookerIdAndStartAfter(userId, now, pageable).stream()
-                        .map(BookingMapper::toBookingResponseDto)
-                        .collect(Collectors.toList());
-            case "WAITING":
-                return bookingRepository.findByBookerIdAndStatus(userId, BookingStatus.WAITING, pageable).stream()
-                        .map(BookingMapper::toBookingResponseDto)
-                        .collect(Collectors.toList());
-            case "REJECTED":
-                return bookingRepository.findByBookerIdAndStatus(userId, BookingStatus.REJECTED, pageable).stream()
-                        .map(BookingMapper::toBookingResponseDto)
-                        .collect(Collectors.toList());
-            default:
-                throw new ValidationException("Unknown state: " + state);
+        BookingStateFetchStrategy strategy = bookingStrategyMap.get(state.toUpperCase());
+        if (strategy == null) {
+            throw new ValidationException("Unknown state: " + state);
         }
+
+        return strategy.getBookings(userId, now, pageable).stream()
+                .map(BookingMapper::toBookingResponseDto)
+                .collect(Collectors.toList());
     }
 
     public List<BookingResponseDto> getOwnerBookings(Long userId, String state, int from, int size) {
-        // Проверяем, что пользователь существует
         if (!userRepository.existsById(userId)) {
             throw new NotFoundException("Пользователь с ID " + userId + " не найден");
         }
@@ -158,34 +139,15 @@ public class BookingService {
         Pageable pageable = PageRequest.of(from / size, size, Sort.by("start").descending());
         LocalDateTime now = LocalDateTime.now();
 
-        switch (state.toUpperCase()) {
-            case "ALL":
-                return bookingRepository.findByItemOwnerId(userId, pageable).stream()
-                        .map(BookingMapper::toBookingResponseDto)
-                        .collect(Collectors.toList());
-            case "CURRENT":
-                return bookingRepository.findByItemOwnerIdAndStartBeforeAndEndAfter(userId, now, pageable).stream()
-                        .map(BookingMapper::toBookingResponseDto)
-                        .collect(Collectors.toList());
-            case "PAST":
-                return bookingRepository.findByItemOwnerIdAndEndBefore(userId, now, pageable).stream()
-                        .map(BookingMapper::toBookingResponseDto)
-                        .collect(Collectors.toList());
-            case "FUTURE":
-                return bookingRepository.findByItemOwnerIdAndStartAfter(userId, now, pageable).stream()
-                        .map(BookingMapper::toBookingResponseDto)
-                        .collect(Collectors.toList());
-            case "WAITING":
-                return bookingRepository.findByItemOwnerIdAndStatus(userId, BookingStatus.WAITING, pageable).stream()
-                        .map(BookingMapper::toBookingResponseDto)
-                        .collect(Collectors.toList());
-            case "REJECTED":
-                return bookingRepository.findByItemOwnerIdAndStatus(userId, BookingStatus.REJECTED, pageable).stream()
-                        .map(BookingMapper::toBookingResponseDto)
-                        .collect(Collectors.toList());
-            default:
-                throw new ValidationException("Unknown state: " + state);
+        String ownerStateKey = "OWNER_" + state.toUpperCase();
+        BookingStateFetchStrategy strategy = bookingStrategyMap.get(ownerStateKey);
+        if (strategy == null) {
+            throw new ValidationException("Unknown state: " + state);
         }
+
+        return strategy.getBookings(userId, now, pageable).stream()
+                .map(BookingMapper::toBookingResponseDto)
+                .collect(Collectors.toList());
     }
 
     // Вспомогательный метод для ItemService

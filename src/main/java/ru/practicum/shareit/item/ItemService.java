@@ -124,22 +124,15 @@ public class ItemService {
 
         LocalDateTime now = LocalDateTime.now();
 
-        // Проверяем, есть ли APPROVED бронирование
+        // Используем exists-запрос вместо получения всех записей
+        boolean hasCompletedBooking = bookingRepository.existsCompletedApprovedBooking(userId, itemId, now);
+
+        if (!hasCompletedBooking) {
+            throw new ValidationException("У вас нет завершенного подтвержденного бронирования этой вещи");
+        }
+
+        // Проверяем последнее бронирование для уточнения времени
         List<Booking> approvedBookings = bookingRepository.findApprovedBookings(userId, itemId);
-
-        if (approvedBookings.isEmpty()) {
-            throw new ValidationException("У вас нет подтвержденного бронирования этой вещи");
-        }
-
-        // Проверяем, есть ли завершенное APPROVED бронирование
-        List<Booking> completedBookings = bookingRepository.findCompletedApprovedBookings(userId, itemId, now);
-
-        if (!completedBookings.isEmpty()) {
-            // Создаем комментарий
-            return createComment(commentDto, item, user);
-        }
-
-        // Если нет завершенных бронирований - проверяем, может ли быть исключение
         Booking latestBooking = approvedBookings.stream()
                 .max((b1, b2) -> b1.getEnd().compareTo(b2.getEnd()))
                 .orElse(null);
@@ -163,7 +156,7 @@ public class ItemService {
             return createComment(commentDto, item, user);
         }
 
-        throw new ValidationException("У вас нет подходящего бронирования для комментария");
+        return createComment(commentDto, item, user);
     }
 
     private CommentDto createComment(CommentDto commentDto, Item item, User author) {
