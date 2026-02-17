@@ -23,22 +23,43 @@ jobs:
 
       - name: Start Spring Boot Server
         run: |
-          # Запускаем сервер в фоновом режиме
-          mvn spring-boot:run -DskipTests -q &
-          echo "SERVER_PID=$!" >> $GITHUB_ENV
-          
-          # Ждем пока сервер запустится
-          echo "Waiting for server to start..."
+          # Запускаем gateway в фоне
+          mvn -pl gateway spring-boot:run -DskipTests -q &
+          GATEWAY_PID=$!
+          # Запускаем server в фоне
+          mvn -pl server spring-boot:run -DskipTests -q &
+          SERVER_PID=$!
+          echo "SERVER_PID=$SERVER_PID" >> $GITHUB_ENV
+          echo "GATEWAY_PID=$GATEWAY_PID" >> $GITHUB_ENV
+
+          # Ждём запуск gateway (порт 8080)
+          echo "Waiting for gateway to start..."
           for i in {1..30}; do
             if curl -s http://localhost:8080 > /dev/null 2>&1; then
+              echo "✅ Gateway is running!"
+              break
+            fi
+            echo "Attempt $i/30: Gateway not ready yet..."
+            sleep 2
+          done
+
+          if ! curl -s http://localhost:8080 > /dev/null 2>&1; then
+            echo "❌ Gateway failed to start"
+            exit 1
+          fi
+
+          # Ждём запуск server (порт 9090) – опционально, но полезно
+          echo "Waiting for server to start..."
+          for i in {1..30}; do
+            if curl -s http://localhost:9090/actuator/health > /dev/null 2>&1; then
               echo "✅ Server is running!"
               break
             fi
             echo "Attempt $i/30: Server not ready yet..."
             sleep 2
           done
-          
-          if ! curl -s http://localhost:8080 > /dev/null 2>&1; then
+
+          if ! curl -s http://localhost:9090/actuator/health > /dev/null 2>&1; then
             echo "❌ Server failed to start"
             exit 1
           fi
@@ -51,16 +72,16 @@ jobs:
 
       - name: Run Postman Tests
         run: |
-          # Проверяем существование файла коллекции
-          if [ ! -f "./src/test/resources/sprint.json" ]; then
-            echo "❌ Collection file not found at ./src/test/resources/sprint.json"
-            echo "Available files in src/test/resources/:"
-            find ./src/test/resources/ -name "*.json" -type f
+          # Проверяем существование файла коллекции (он лежит в postman/sprint.json)
+          if [ ! -f "./postman/sprint.json" ]; then
+            echo "❌ Collection file not found at ./postman/sprint.json"
+            echo "Available files in postman/:"
+            find ./postman/ -name "*.json" -type f
             exit 1
           fi
-          
-          echo "✅ Found collection file: ./src/test/resources/sprint.json"
-          
+
+          echo "✅ Found collection file: ./postman/sprint.json"
+
           # Проверяем шаблон если указан
           if [ -f "./tests/.github/workflows/dashboard-template.hbs" ]; then
             TEMPLATE_OPTION="--reporter-htmlextra-template ./tests/.github/workflows/dashboard-template.hbs"
@@ -69,9 +90,9 @@ jobs:
             TEMPLATE_OPTION=""
             echo "Using default template"
           fi
-          
+
           # Запускаем тесты
-          newman run ./src/test/resources/sprint.json \
+          newman run ./postman/sprint.json \
             --delay-request 50 \
             -r cli,htmlextra \
             --verbose \
@@ -86,8 +107,10 @@ jobs:
         if: always()
         run: |
           if [ -n "$SERVER_PID" ]; then
-            echo "Stopping server with PID: $SERVER_PID"
             kill $SERVER_PID 2>/dev/null || true
+          fi
+          if [ -n "$GATEWAY_PID" ]; then
+            kill $GATEWAY_PID 2>/dev/null || true
           fi
           pkill -f "spring-boot" 2>/dev/null || true
 
